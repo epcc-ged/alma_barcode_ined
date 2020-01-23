@@ -2,9 +2,10 @@
 ################################################################################
 # SCRIPT modify_item_data.pl
 # DESCRIPTION : ce script lit en entrée des fichiers xml contenant la 
-# notice complète d'un exemplaire, depuis le biblio jusqu'à l'exemplaire propre-
-# ment dit. Il modifie ces informations puis écrit un ordre de mise à jour de
-# l'exemplaire
+# notice complète d'un exemplaire depuis le biblio jusqu'à l'exemplaire propre-
+# ment dit. Le XML lu est modifié puis on l'utilise comme paramètre d'un ordre 
+# API de mise à jour dans Alma.
+# ENTREE : fichier de données (codes barres), clef API
 # SORTIE : un fichier par item.
 ################################################################################
 use strict;
@@ -18,32 +19,15 @@ Log::Log4perl->easy_init({
 });
 use XML::Twig;
 
-# Clef API en écriture sur le bac à sable
-#my $APIKEY = 'l8xx6d859dd63ee94cf9981a4911c99f8aa1';
 my $adresse_api = 'https://api-eu.hosted.exlibrisgroup.com/almaws/v1/bibs/mms_id/holdings/holding_id/items/item_pid';
-# Création d'un dictionnaire faisant correspondre les codes-barres et les descriptions
-# ####################################################################################
-my %cb2description;
+# Contrôle des paramètres d'entrée.
 my ($entry_file, $APIKEY) = @ARGV;
 if (not defined $entry_file or not defined $APIKEY) {
-	  die "Indiquez en entrée (1)un fichier contenant les codes barres et la description et (2) la clef API";
+	  die "Indiquez en entrée (1)un fichier contenant les codes barres et la cote et (2) la clef API";
 }
 else {
     TRACE "Fichier traité : $entry_file\n";
 }
-open ( FILE_IN, "<", $entry_file) || die "Le fichier $entry_file est manquant\n";
-binmode FILE_IN, ":utf8";
-while (<FILE_IN>)
-{ 
-	chomp;
-	my ($key, $val) = split /\|/;
-	# Si jamais un code barre apparaît deux fois, on n'a pas le choix : il faut
-	# écraser avec la dernière valeur trouvée.
-	# #########################################################################
-	TRACE $key;
-	$cb2description{$key} = $val; 
-}
-close(FILE_IN);
 
 my $mms_id;
 my $holding_id;
@@ -62,6 +46,7 @@ my $item_pid;
 		{
 		  my $fichier_xml = $repertoire . $FILE_NAME;
 		  TRACE "Fichier traité : $fichier_xml\n";
+
 	    # Lecture des informations récupérées d'Alma. C'est un arbre XML.
 	    # ###############################################################
 	    my $twig= new XML::Twig( 
@@ -81,9 +66,9 @@ my $item_pid;
 			#TRACE "--> PID : $item_pid\n";
 
 			# $twig->print(pretty_print=>'indented');
-      my $sortie = $twig->sprint;               # C'est le XML a envoyer dans Alma après les modifications
-			$sortie =~ s/"/\\"/g;                     # Il faut y protéger les double quotes
-			$sortie =~ s/\n//g;                       # et y retirer les \n.
+      my $sortie = $twig->sprint;                        # C'est le XML a envoyer dans Alma après les modifications
+			$sortie =~ s/"/\\"/g;                              # Il faut y protéger les double quotes
+			$sortie =~ s/\n//g;                                # et y retirer les \n.
 			my $temp_adresse_api = $adresse_api;
 			$temp_adresse_api =~ s/mms_id/$mms_id/g;           # Mettre l'identifiant de la bib dans l'appel API
 			$temp_adresse_api =~ s/holding_id/$holding_id/g;   # Mettre l'identifiant holding dans l'appel API
@@ -91,7 +76,6 @@ my $item_pid;
 
 			my $ordre_api = 'curl -X PUT "'. $temp_adresse_api . '?apikey=' . $APIKEY . '" -H  "accept: application/xml" -H  "Content-Type: application/xml" -d "';
 			$ordre_api = $ordre_api . $sortie . "\" > log/modified" . $FILE_NAME . ".log";
-			#TRACE "--> Ordre API à envoyer à Alma : $ordre_api\n";
 
 			# Enregistrement de l'ordre dans un fichier.
 			# ##########################################
@@ -99,8 +83,6 @@ my $item_pid;
 			binmode $file_out, ":utf8";
 			print $file_out $ordre_api;
 	    close($file_out);
-			#TRACE "--> Ordre API enregistré dans le fichier.\n";
-			#TRACE "Fin de traitement du fichier --------------------\n";
     }
   }
 }
@@ -109,28 +91,54 @@ my $item_pid;
 # ###############################################
 sub item_data {
 	my ($twig, $item_data)= @_;
-	#my @test=$item_data->children;     # Liste des balises dans item_data
-	#foreach my $test (@test)           
-	#{ $test->print;               
-	#  print "\n"; 
-	#}
+	my $taille = 0;
 	my $barcode = $item_data->first_child('barcode')->text ;
-	TRACE "--> Code barre : $barcode\n";
-	# Il faut retirer le premier caractère de la description si ce n'est pas un caractère [0-z]
-  (my $description = $cb2description{$barcode}) =~ s/,//;	
-	TRACE "--> Description : $description";
-	$item_data->first_child('description')->set_text($description);
+	# TRACE "--> Code barre : $barcode\n";
+	
+	# Il faut modifier le barcode pour le compléter à dix chiffres (dans la majorité des cas).
+	# Les quatres derniers chiffres sont toujours 0610. A gauche, il faut mettre des zéros.
+	# Ex. si le code barre est 65067, on doit arriver à 065067610 et si c'est 103126, on doit arriver à 103126.
+	#
+	# 1ere étape : on retire le # ajouté par le SID Chantier (le cas échéant) et ce qui le suit (c'est aussi une information SID Chantier)
+	# 2e étape : on ajoute le suffixe 0610 sauf si le code barre fait 11, 10, 9 ou 8 caractères (dans tous les autre cas, on ne fait rien))
+	# 3e étape : on ajoute le préfixe en 0 selon le nombre de chiffres nécessaires pour arriver à 10.
+	# #####################################################################################################################################
+	
+	# Suppression du # et de ce qui le suit.
+	if (index($barcode, "#") != -1) {
+		$barcode =~ s/\#[0-9]$//;
+	} 
 
+	# Ajout du suffixe 0610 et complétion à gauche par des zéros
+	$taille = length($barcode);
+	if ($taille < 10) {
+		if ($taille <= 6){
+			$barcode =~ s/$/0610/;
+			for (my $i = 1 ; $i <= (6 - $taille) ; $i++){
+				$barcode = "0" . $barcode;
+			}
+		} elsif ($taille == 9) {
+				$barcode = "0" . $barcode;
+		} elsif (($taille == 8) && (substr($barcode, 0, 1) == "3")) {
+				$barcode = "00" . $barcode;
+		}
+	}
+
+	# Modification de l'arbre XML avec le code-barre corrigé.
+	$item_data->first_child('barcode')->set_text($barcode);
+
+	# Récupération du PID
 	$item_pid =   $item_data->first_child('pid')->text;
 }
 
-# Récupération du holding id et autres opérations de holding
+# Récupération du holding id. On en profite pour retirer
+# une exclusion de prêt temporaire parasite ajoutée à la
+# migration.
 # ##########################################################
 sub holding_data {
 	my ($twig, $holding_data)= @_;
-	$holding_id = $holding_data->first_child("holding_id")->text();
 	$holding_data->first_child("temp_policy")->set_text("");
-	TRACE "--> Suppression de la valeur d'exception de circulation\n";
+	$holding_id = $holding_data->first_child("holding_id")->text();
 }
  
 # Récupération du mms_id

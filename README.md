@@ -1,7 +1,7 @@
 # alma_modify_items
 
 ### Objectif
-Les programmes utilisés ici permettent de mettre à jour les descriptions d'exemplaires dans Alma sur la base d'une liste de codes-barres et de descriptions correspondantes fournis en entrée du premier des scripts.
+Les programmes utilisés ici permettent de mettre à jour les codes barres de l'INED en les complétant à gauche par 0610 et à droite par des 0 jusqu'à avoir dix caractères.
 
 ### Description du processus et des fichiers
 

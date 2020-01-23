@@ -6,7 +6,7 @@
 # ment dit. Le XML lu est modifié puis on l'utilise comme paramètre d'un ordre 
 # API de mise à jour dans Alma.
 # ENTREE : fichier de données (codes barres), clef API
-# SORTIE : un fichier par item.
+# SORTIE : un fichier par item dans modify-xml-modify
 ################################################################################
 use strict;
 use warnings;

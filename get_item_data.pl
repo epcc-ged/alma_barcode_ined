@@ -5,7 +5,7 @@
 # d'exemplaires. Pour chaque code-barre lu, le script écrit un ordre d'appel à une API
 # d'Alma qui renverra un arbre XML contenant l'item, sa holding et sa bib.
 # ENTREE : nom du fichier avec code-barre ; clef API
-# SORTIE : un fichier par item dans un répertoire wget-xml-get
+# SORTIE : un fichier par item dans un répertoire items-xml-get
 ################################################################################
 use strict;
 use warnings;
